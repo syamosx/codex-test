@@ -35,24 +35,36 @@ jobs:
           npm ci --no-audit --no-fund
           npx --no-install tsc
 
-      - name: Download 480p video and best original Arabic audio
+      - name: Download native streams using supported clients
         shell: bash
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/video-env/bin/yt-dlp" \
-            --js-runtimes node \
-            --extractor-args 'youtube:player_client=mweb' \
-            --extractor-args "youtubepot-bgutilscript:server_home=$RUNNER_TEMP/bgutil/server" \
-            --no-playlist \
-            --retries 3 \
-            --socket-timeout 30 \
-            -f '135+ba[language=ar]/135+ba' \
-            --merge-output-format mkv \
-            --newline --progress-delta 10 \
-            -o "$RUNNER_TEMP/video_480p_original_audio.mkv" \
-            'https://www.youtube.com/watch?v=8YPub3-TQjU'
-          ffprobe -v error -show_entries stream=codec_name,width,height:format=duration,size \
-            -of json "$RUNNER_TEMP/video_480p_original_audio.mkv"
+          completed=0
+          for client in default web_embedded android_vr web_safari; do
+            printf 'Trying YouTube client: %s\n' "$client"
+            rm -f "$RUNNER_TEMP"/video_480p_original_audio*
+            if "$RUNNER_TEMP/video-env/bin/yt-dlp" \
+              --js-runtimes node \
+              --extractor-args "youtube:player_client=$client" \
+              --extractor-args "youtubepot-bgutilscript:server_home=$RUNNER_TEMP/bgutil/server" \
+              --no-playlist --extractor-retries 1 \
+              --retries 1 --socket-timeout 20 \
+              -f '135+ba[language=ar]/bv[height=480]+ba[language=ar]/135+ba' \
+              --merge-output-format mkv \
+              --newline --progress-delta 10 \
+              -o "$RUNNER_TEMP/video_480p_original_audio.mkv" \
+              'https://www.youtube.com/watch?v=8YPub3-TQjU'; then
+              if ffprobe -v error -show_entries stream=codec_name,width,height:format=duration,size \
+                -of json "$RUNNER_TEMP/video_480p_original_audio.mkv"; then
+                completed=1
+                break
+              fi
+            fi
+          done
+          if [ "$completed" != 1 ]; then
+            printf 'No supported client produced a valid media file.\n'
+            exit 1
+          fi
 
       - name: Save merged video
         uses: actions/upload-artifact@v7
