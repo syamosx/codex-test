@@ -1,0 +1,64 @@
+name: Download native 480p video
+
+"on":
+  push:
+    paths:
+      - .github/workflows/download-video-480p.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install download and merge tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/video-env"
+          "$RUNNER_TEMP/video-env/bin/pip" install --pre 'yt-dlp[default]' 'bgutil-ytdlp-pot-provider==2.0.2'
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+          git clone --depth 1 --branch 2.0.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git "$RUNNER_TEMP/bgutil"
+          cd "$RUNNER_TEMP/bgutil/server"
+          npm ci --no-audit --no-fund
+          npx --no-install tsc
+
+      - name: Download 480p video and best original Arabic audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/video-env/bin/yt-dlp" \
+            --js-runtimes node \
+            --extractor-args 'youtube:player_client=mweb' \
+            --extractor-args "youtubepot-bgutilscript:server_home=$RUNNER_TEMP/bgutil/server" \
+            --no-playlist \
+            --retries 3 \
+            --socket-timeout 30 \
+            -f '135+ba[language=ar]/135+ba' \
+            --merge-output-format mkv \
+            --newline --progress-delta 10 \
+            -o "$RUNNER_TEMP/video_480p_original_audio.mkv" \
+            'https://www.youtube.com/watch?v=8YPub3-TQjU'
+          ffprobe -v error -show_entries stream=codec_name,width,height:format=duration,size \
+            -of json "$RUNNER_TEMP/video_480p_original_audio.mkv"
+
+      - name: Save merged video
+        uses: actions/upload-artifact@v7
+        with:
+          name: video-480p-original-audio
+          path: ${{ runner.temp }}/video_480p_original_audio.mkv
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
